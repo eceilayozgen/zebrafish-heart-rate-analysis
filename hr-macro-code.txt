@@ -1,0 +1,196 @@
+// === Zebrafish HR Macro ===
+// Full results + Plot + Filtered HR Average + Arrhythmia Detection
+// Author: Ece İlay Özgen
+
+nFrames = nSlices;
+fps = 30;
+minSpacing = 6;
+prominenceThreshold = 0.05;
+minInterval = 4;
+
+if (nFrames <= 1) exit("No image stack loaded.");
+
+// Step 1: ROI
+waitForUser("Draw a rectangle ROI over the ventricle and click OK.");
+getSelectionBounds(x, y, width, height);
+
+// Step 2: Measure intensity
+frames = newArray(nFrames);
+means = newArray(nFrames);
+smooth = newArray(nFrames);
+isDiastole = newArray(nFrames);
+
+setBatchMode(true);
+for (i = 0; i < nFrames; i++) {
+    setSlice(i + 1);
+    makeRectangle(x, y, width, height);
+    getStatistics(area, mean);
+    frames[i] = i + 1;
+    means[i] = mean;
+}
+setBatchMode(false);
+
+// Step 3: Smooth signal
+smooth[0] = means[0];
+smooth[nFrames - 1] = means[nFrames - 1];
+for (i = 1; i < nFrames - 1; i++) {
+    smooth[i] = (means[i - 1] + means[i] + means[i + 1]) / 3;
+}
+
+// Step 4: Detect diastole
+lastDiastole = -minSpacing;
+count = 0;
+for (i = 1; i < nFrames - 1; i++) {
+    dip = maxOf(smooth[i - 1], smooth[i + 1]) - smooth[i];
+    if (
+        smooth[i] < smooth[i - 1] &&
+        smooth[i] < smooth[i + 1] &&
+        dip >= prominenceThreshold &&
+        (i - lastDiastole >= minSpacing)
+    ) {
+        isDiastole[i] = 1;
+        lastDiastole = i;
+        count++;
+    } else {
+        isDiastole[i] = 0;
+    }
+}
+
+if (count < 2) {
+    showMessage("No valid heartbeats found.");
+    exit();
+}
+
+// Step 5: Collect diastole frames
+diastoleFrames = newArray(count);
+diastoleY = newArray(count);
+index = 0;
+for (i = 0; i < nFrames; i++) {
+    if (isDiastole[i]) {
+        diastoleFrames[index] = i + 1;
+        diastoleY[index] = smooth[i];
+        index++;
+    }
+}
+
+// Step 6: HR Calculation
+numBeats = count - 1;
+validHRs = newArray(numBeats);
+validIntervals = newArray(numBeats);
+validCount = 0;
+
+for (i = 0; i < numBeats; i++) {
+    frameDiff = diastoleFrames[i + 1] - diastoleFrames[i];
+    if (frameDiff >= minInterval) {
+        intervalSec = frameDiff / fps;
+        hr = 60 / intervalSec;
+
+        setResult("Diastole Frame", i, diastoleFrames[i + 1]);
+        setResult("Interval (s)", i, intervalSec);
+        setResult("HR (bpm)", i, hr);
+
+        // Store HR and interval
+        if (hr < 150) {
+            validHRs[validCount] = hr;
+            validIntervals[validCount] = intervalSec;
+            validCount++;
+        }
+    }
+}
+updateResults();
+
+// Step 7: Compute filtered average HR
+if (validCount > 0) {
+    sumHR = 0;
+    for (i = 0; i < validCount; i++) {
+        sumHR += validHRs[i];
+    }
+    avgHR = sumHR / validCount;
+
+    setResult("Diastole Frame", numBeats, "Filtered Avg HR");
+    setResult("Interval (s)", numBeats, "");
+    setResult("HR (bpm)", numBeats, avgHR);
+    updateResults();
+
+    // Step 7.2: Compute filtered average Interval
+    sumInterval = 0;
+    for (i = 0; i < validCount; i++) {
+        sumInterval += validIntervals[i];
+    }
+    avgInterval = sumInterval / validCount;
+
+    rowNext = numBeats + 1;
+    setResult("Diastole Frame", rowNext, "Avg Interval");
+    setResult("Interval (s)", rowNext, avgInterval);
+    setResult("HR (bpm)", rowNext, "");
+    updateResults();
+}
+
+// === Step 7.5: Arrhythmia Metrics ===
+if (validCount > 1) {
+    sumIntervals = 0;
+    sumHRs = 0;
+    for (i = 0; i < validCount; i++) {
+        sumIntervals += validIntervals[i];
+        sumHRs += validHRs[i];
+    }
+    meanInterval = sumIntervals / validCount;
+    meanHR = sumHRs / validCount;
+
+    // SDNN
+    sumSqInterval = 0;
+    for (i = 0; i < validCount; i++) {
+        diff = validIntervals[i] - meanInterval;
+        sumSqInterval += diff * diff;
+    }
+    sdnn = sqrt(sumSqInterval / validCount);
+
+    // HR SD
+    sumSqHR = 0;
+    for (i = 0; i < validCount; i++) {
+        diffHR = validHRs[i] - meanHR;
+        sumSqHR += diffHR * diffHR;
+    }
+    sdHR = sqrt(sumSqHR / validCount);
+
+    // RMSSD
+    sumSqDiff = 0;
+    for (i = 1; i < validCount; i++) {
+        diffRM = validIntervals[i] - validIntervals[i - 1];
+        sumSqDiff += diffRM * diffRM;
+    }
+    rmssd = sqrt(sumSqDiff / (validCount - 1));
+
+    // Output to rows after Filtered Avg Interval
+    rowStart = rowNext + 1;
+    setResult("Diastole Frame", rowStart, "SDNN");
+    setResult("Interval (s)", rowStart, "");
+    setResult("HR (bpm)", rowStart, sdnn);
+
+    setResult("Diastole Frame", rowStart + 1, "HR SD");
+    setResult("Interval (s)", rowStart + 1, "");
+    setResult("HR (bpm)", rowStart + 1, sdHR);
+
+    setResult("Diastole Frame", rowStart + 2, "RMSSD");
+    setResult("Interval (s)", rowStart + 2, "");
+    setResult("HR (bpm)", rowStart + 2, rmssd);
+
+    // Arrhythmia warning
+    // Change the values to define arrhythmia in the line below:
+    if (sdnn > 0.1 || rmssd > 0.2 || sdHR > 15) {
+        showMessage("Possible arrhythmia detected:\nSDNN = " + sdnn + " s\nRMSSD = " + rmssd + " s\nHR SD = " + sdHR + " bpm");
+    }
+}
+updateResults();
+
+// Step 8: Plot raw + smoothed intensity with markers
+Plot.create("Heart Brightness", "Frame", "Mean Intensity", frames, means);
+Plot.setColor("blue");
+Plot.add("line", frames, means);
+
+Plot.setColor("green");
+Plot.add("line", frames, smooth);
+
+Plot.setColor("red");
+Plot.add("circle", diastoleFrames, diastoleY);
+Plot.show();
