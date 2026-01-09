@@ -17,7 +17,7 @@ This repository contains the HR macro for ImageJ, designed to quantify heart rat
 
 ## Protocol
 
-Full usage protocol and parameter guidelines are provided in the following document: [**FACDiam_Macro_Protocol.pdf**](https://github.com/eceilayozgen/zebrafish-heart-rate-analysis/blob/main/HR_Macro_Protocol.pdf)
+Full usage protocol and parameter guidelines are provided in the following document: [**HR_Macro_Protocol.pdf**](https://github.com/eceilayozgen/zebrafish-heart-rate-analysis/blob/main/HR_Macro_Protocol.pdf)
 
 ## License
 
